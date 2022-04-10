@@ -1,0 +1,117 @@
+PRODUCT = @PRODUCT@
+VERSION = @VERSION@
+
+SHELL = /bin/sh
+top_srcdir = @top_srcdir@
+srcdir = @srcdir@
+
+.SUFFIXES:
+.SUFFIXES: .c .o
+
+CC = @CC@
+DEFINES = @DEFS@
+CFLAGS = -I. @CFLAGS@ $(DEFINES)
+LDFLAGS = @LDFLAGS@
+LIBS = @LIBS@
+INSTALL = @INSTALL@
+prefix = @prefix@
+exec_prefix = @exec_prefix@
+bindir = @bindir@
+mandir = @mandir@
+datarootdir = @datarootdir@
+
+DISTFILES =
+
+TARGET1=photons_tool
+TARGET2=countnibbles
+TARGET3=dolog
+TARGETS=$(TARGET1) $(TARGET2) $(TARGET3)
+SOURCES1=photons_tool.c photons.c photons_rle.c
+SOURCES2=countnibbles.c
+SOURCES3=dolog.c
+SOURCES=$(SOURCES1) $(SOURCES2) $(SOURCES3)
+HEADERS1=photons.h photons_rle.h
+HEADERS2=
+HEADERS3=
+HEADERS=$(HEADERS1) $(HEADERS2) $(HEADERS3)
+OBJS1=photons_tool.o photons.o photons_rle.o
+OBJS2=countnibbles.o
+OBJS3=dolog.o
+LIBS3=-lm
+OBJS=$(OBJS1) $(OBJS2) $(OBJS3)
+LIB_OBJS=
+DISTSRC=aclocal.m4 config.h.in configure configure.in $(SOURCES) $(HEADERS) install-sh Makefile.in mkinstalldirs README.md
+DISTBIN=$(TARGETS) README.md
+
+all: $(TARGETS)
+
+install: all
+	$(top_srcdir)/mkinstalldirs $(bindir)
+	$(INSTALL) $(TARGET1) $(bindir)/$(TARGET1)
+	$(INSTALL) $(TARGET2) $(bindir)/$(TARGET2)
+	$(INSTALL) $(TARGET3) $(bindir)/$(TARGET3)
+##	$(top_srcdir)/mkinstalldirs $(mandir)/man1
+##	$(INSTALL) $(MAN) $(mandir)/man1/$(MAN)
+
+$(TARGET1): $(OBJS1)
+	$(CC) $(CFLAGS) -o $(TARGET1) $(OBJS1) $(LDFLAGS) $(LIBS)
+
+$(TARGET2): $(OBJS2)
+	$(CC) $(CFLAGS) -o $(TARGET2) $(OBJS2) $(LDFLAGS) $(LIBS)
+
+$(TARGET3): $(OBJS3)
+	$(CC) $(CFLAGS) -o $(TARGET3) $(OBJS3) $(LDFLAGS) $(LIBS) $(LIBS3)
+
+
+photons_tool.o : photons_tool.c photons.h photons_rle.h
+
+photons.o : photons.c photons.h
+
+photons_rle.o : photons_rle.c photons_rle.h
+
+$(OBJS2): $(SOURCES2) $(HEADERS2)
+
+$(OBJS3): $(SOURCES3) $(HEADERS3)
+
+clean:
+	/bin/rm -f $(TARGETS) *.o core $(PRODUCT)-$(VERSION)-*.tar.gz*
+
+distclean: clean config-clean
+
+config-clean: confclean-recursive
+
+confclean-recursive: cfg-clean
+
+cfg-clean:
+	/bin/rm -f Makefile config.h config.status config.cache config.log
+
+mostlyclean: clean
+
+maintainer-clean: clean
+
+package: all
+	tar czf $(PRODUCT)-$(VERSION)-bin.tar.gz $(DISTBIN)
+	md5sum $(PRODUCT)-$(VERSION)-bin.tar.gz > $(PRODUCT)-$(VERSION)-bin.tar.gz.md5
+	tar czf $(PRODUCT)-$(VERSION)-src.tar.gz $(DISTSRC)
+	md5sum $(PRODUCT)-$(VERSION)-src.tar.gz > $(PRODUCT)-$(VERSION)-src.tar.gz.md5
+
+# automatic re-running of configure if the configure.in file has changed
+${srcdir}/configure: configure.in 
+	cd ${srcdir} && autoconf
+
+# autoheader might not change config.h.in, so touch a stamp file
+${srcdir}/config.h.in: stamp-h.in
+${srcdir}/stamp-h.in: configure.in 
+		cd ${srcdir} && autoheader
+		echo timestamp > ${srcdir}/stamp-h.in
+
+config.h: stamp-h
+stamp-h: config.h.in config.status
+	./config.status
+Makefile: Makefile.in config.status
+	./config.status
+config.status: configure
+	./config.status --recheck
+
+
+
