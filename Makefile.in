@@ -12,7 +12,7 @@ CC = @CC@
 DEFINES = @DEFS@
 CFLAGS = -I. @CFLAGS@ $(DEFINES)
 LDFLAGS = @LDFLAGS@
-LIBS = @LIBS@
+LIBS = @LIBS@ -lm
 INSTALL = @INSTALL@
 prefix = @prefix@
 exec_prefix = @exec_prefix@
@@ -24,21 +24,16 @@ DISTFILES =
 
 TARGET1=photons_tool
 TARGET2=countnibbles
-TARGET3=dolog
-TARGETS=$(TARGET1) $(TARGET2) $(TARGET3)
+TARGETS=$(TARGET1) $(TARGET2)
 SOURCES1=photons_tool.c photons.c photons_rle.c
 SOURCES2=countnibbles.c
-SOURCES3=dolog.c
-SOURCES=$(SOURCES1) $(SOURCES2) $(SOURCES3)
+SOURCES=$(SOURCES1) $(SOURCES2)
 HEADERS1=photons.h photons_rle.h
 HEADERS2=
-HEADERS3=
-HEADERS=$(HEADERS1) $(HEADERS2) $(HEADERS3)
+HEADERS=$(HEADERS1) $(HEADERS2)
 OBJS1=photons_tool.o photons.o photons_rle.o
 OBJS2=countnibbles.o
-OBJS3=dolog.o
-LIBS3=-lm
-OBJS=$(OBJS1) $(OBJS2) $(OBJS3)
+OBJS=$(OBJS1) $(OBJS2)
 LIB_OBJS=
 DISTSRC=aclocal.m4 config.h.in configure configure.in $(SOURCES) $(HEADERS) install-sh Makefile.in mkinstalldirs README.md
 DISTBIN=$(TARGETS) README.md
@@ -49,7 +44,6 @@ install: all
 	$(top_srcdir)/mkinstalldirs $(bindir)
 	$(INSTALL) $(TARGET1) $(bindir)/$(TARGET1)
 	$(INSTALL) $(TARGET2) $(bindir)/$(TARGET2)
-	$(INSTALL) $(TARGET3) $(bindir)/$(TARGET3)
 ##	$(top_srcdir)/mkinstalldirs $(mandir)/man1
 ##	$(INSTALL) $(MAN) $(mandir)/man1/$(MAN)
 
@@ -58,9 +52,6 @@ $(TARGET1): $(OBJS1)
 
 $(TARGET2): $(OBJS2)
 	$(CC) $(CFLAGS) -o $(TARGET2) $(OBJS2) $(LDFLAGS) $(LIBS)
-
-$(TARGET3): $(OBJS3)
-	$(CC) $(CFLAGS) -o $(TARGET3) $(OBJS3) $(LDFLAGS) $(LIBS) $(LIBS3)
 
 
 photons_tool.o : photons_tool.c photons.h photons_rle.h
@@ -71,7 +62,6 @@ photons_rle.o : photons_rle.c photons_rle.h
 
 $(OBJS2): $(SOURCES2) $(HEADERS2)
 
-$(OBJS3): $(SOURCES3) $(HEADERS3)
 
 clean:
 	/bin/rm -f $(TARGETS) *.o core $(PRODUCT)-$(VERSION)-*.tar.gz*

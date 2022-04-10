@@ -4,6 +4,9 @@
 #include<stdint.h>
 #include<unistd.h>
 #include<ctype.h>
+#include<sys/types.h>
+#include<sys/stat.h>
+#include<math.h>
 
 #include "photons.h"
 #include "photons_rle.h"
@@ -12,9 +15,7 @@ void usage(char *progname) {
   fprintf(stderr, "Usage: %s -f <file> [-P <preview file>] [-L <layer file prefix>] [-s <starting exposure> [-e <ending exposure>]]\n", progname);
   fprintf(stderr, "      [-o <layer offset (not counting base layers)] [-I <individual settings value>] [-N <normal exposure time>]\n");
   fprintf(stderr, "      [-l <file with layer paths>] [-F flags]\n");
-#if 0
-  fprintf(stderr, "[-M <log modifier> (remaps gray values)]\n");
-#endif
+  fprintf(stderr, "[-M <log modifier> (remaps gray values) -W <work dir>]\n");
 }
 
 // We have to assume that any blob we read from the file will fit in one of these
@@ -30,6 +31,8 @@ int main(int argc, char *argv[]) {
   FILE *outfile;
   char *previewFile=NULL;
   char *layerPrefix=NULL;
+  char *workDirName=NULL;
+  struct stat workDirStat;
   int individualParams=0;
   int setIndividualParams=0;
   int headerChanged=0;
@@ -49,62 +52,74 @@ int main(int argc, char *argv[]) {
   struct layersdef_layer ldl, bottomLayer_def, normalLayer_def;
   FILE *layerListFile=NULL;
   FILE *layerFile;
-#if 0
   float logMod=-1;
-#endif
+  int map[16];
+  float map_v;
   int currentLayerAddress, nextLayerAddress=0, layerDataAddress;
-  while ((o=getopt(argc, argv, "f:P:L:s:e:o:I:N:l:F:"))!=-1) { // M:
-      switch (o)
-	{
-	case 'f':
-	  if (!(photonsFile=fopen(optarg,"r+"))) {
-	    perror(optarg);
-	    return -1;
-	  }
-	  break;
-	case 'P':
-	  previewFile = optarg;
-	  break;
-	case 'L':
-	  layerPrefix = optarg;
-	  break;
-	case 's':
-	  startExp=atof(optarg);
-	  break;
-	case 'e':
-	  endExp=atof(optarg);
-	  break;
-#if 0	 
-	case 'M':
-	  logMod=atof(optarg);
-	  break;
-#endif
-	case 'o':
-	  offset=atoi(optarg);
-	  break;
-	case 'I':
-	  individualParams=strtol(optarg, NULL, 0);
-	  setIndividualParams=1;
-	  break;
-	case 'N':
-	  normalExposureTime=atof(optarg);
-	  break;
-	case 'F':
-	  flags=strtol(optarg, NULL, 0);
-	  break;
-	case 'l':
-	  if (!(layerListFile=fopen(optarg,"r"))) {
-	    perror(optarg);
-	    return -1;
-	  }
-	  break;
-	default:
-	  usage(argv[0]);
+  while ((o=getopt(argc, argv, "f:P:L:s:e:o:I:N:l:F:M:W:"))!=-1) {
+    switch (o)
+      {
+      case 'f':
+	if (!(photonsFile=fopen(optarg,"r+"))) {
+	  perror(optarg);
 	  return -1;
-	  break;
 	}
-    }
-  if (!photonsFile) {
+	break;
+      case 'P':
+	previewFile = optarg;
+	break;
+      case 'L':
+	layerPrefix = optarg;
+	break;
+      case 's':
+	startExp=atof(optarg);
+	break;
+      case 'e':
+	endExp=atof(optarg);
+	break;
+      case 'o':
+	offset=atoi(optarg);
+	break;
+      case 'I':
+	individualParams=strtol(optarg, NULL, 0);
+	setIndividualParams=1;
+	break;
+      case 'N':
+	normalExposureTime=atof(optarg);
+	break;
+      case 'F':
+	flags=strtol(optarg, NULL, 0);
+	break;
+      case 'l':
+	if (!(layerListFile=fopen(optarg,"r"))) {
+	  perror(optarg);
+	  return -1;
+	}
+	break;
+      case 'M':
+	logMod=atof(optarg);
+	break;
+      case 'W':
+	workDirName = optarg;
+	while (strlen(workDirName) > 1 && workDirName[strlen(workDirName) - 1] == '/') {
+	  workDirName[strlen(workDirName) - 1] = '\0';
+	}
+	if (stat(workDirName, &workDirStat) != 0) {
+	  perror(workDirName);
+	  return -2;
+	}
+	if (!(workDirStat.st_mode & S_IFDIR)) {
+	  fprintf(stderr, "%s: not a directory.\n", workDirName);
+	  return -2;
+	}
+	break;
+      default:
+	usage(argv[0]);
+	return -1;
+	break;
+      }
+  }
+  if (!photonsFile || (logMod > -1 && workDirName==NULL)) {
     usage(argv[0]);
     return -1;
   }
@@ -317,18 +332,106 @@ int main(int argc, char *argv[]) {
     }
     fclose(layerListFile);
   }
-
-#if 0
-  // This should not be done in core. It should be done by extracting the layers to a work directory,
-  // and then reading them back and modifying them.
+    
+  // Apply a mod to the layer data gray values
+  // Note:We're skipping the bottom layers here!
   if (logMod > 0) {
-    for (i=ph.bottomLayers+offset; i<ldh.nlayers; i++) {
-      fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + i * sizeof(ldl), SEEK_SET);
-      fread(&ldl, sizeof(ldl), 1, photonsFile);
+    map_v = 15 / (logf(logMod * 15) / logf(15));
+    map[0] = 0;
+    for (i=1; i<16; i++) {
+      map[i] = (int)(0.5 + map_v * logf(logMod * (float)i) / logf(15));
+      printf("Map %d to %d\n", i, map[i]);
+    }
+    nextLayerAddress=0;
+    pid_t myPid = getpid();
+    for (currentLayer=ph.bottomLayers; currentLayer<ldh.nlayers; currentLayer++) {
+      // This is a near copy of the layer export code. Feel free to figure out an
+      // elegant way to refactor both into one. I can't be bothered.
+      fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + currentLayer * sizeof(ldl), SEEK_SET);
+      if (fread(&ldl, sizeof(ldl), 1, photonsFile) != 1) {
+	fprintf(stderr, "Short read on layerdefs layer header.\n");
+	return -10;
+      }
+      // Save the address of the first layer to mod, for the next loop
+      if (currentLayer == ph.bottomLayers) {
+	nextLayerAddress = ldl.address;
+      }
+      sprintf(filenamebuf, "%s/layer%d_%04d.bin", workDirName, myPid, currentLayer);
+      if (!(outfile = fopen(filenamebuf, "w"))) {
+	perror(filenamebuf);
+	return -2;
+      }
+      fseek(photonsFile, ldl.address, SEEK_SET);
+      if (fread(encodedBuf, 1, ldl.datalen, photonsFile) != ldl.datalen) {
+	fprintf(stderr, "Short read on layer image.\n");
+	return -10;
+      }
+      rawImageSize = rleDecode(encodedBuf, ldl.datalen, rawBuf, sizeof(rawBuf));
+      fwrite(rawBuf, 1, rawImageSize, outfile);
+      printf("Extracted layer %d as %s, size %d\n", currentLayer, filenamebuf, rawImageSize);
+      fclose(outfile);
+    }
+    if (nextLayerAddress == 0) {
+      fprintf(stderr, "Something went wrong when extracting layer images.\n");
+      return -3;
+    }
+    // We enter the loop with the file positioned at 'nextLayerAddress'
+    fseek(photonsFile, nextLayerAddress, SEEK_SET);
+    for (currentLayer=ph.bottomLayers; currentLayer<ldh.nlayers; currentLayer++) {
+
+      // Save address in currentLayerAddress
+      currentLayerAddress = nextLayerAddress;
+
+      // Read layer data from the layer file created in the previous step
+      sprintf(filenamebuf, "%s/layer%d_%04d.bin", workDirName, myPid, currentLayer);
+      if (!(layerFile = fopen(filenamebuf, "r"))) {
+	perror(filenamebuf);
+	return -3;
+      }
+      rawImageSize=fread(rawBuf, 1, sizeof(rawBuf), layerFile);
+      fclose(layerFile);
       
+      // Perform the transformation
+      for (int i=0; i<rawImageSize; i++) {
+	rawBuf[i] = (map[(rawBuf[i] & 0xF0) >> 4] << 4) | (map[rawBuf[i] & 0x0F]);
+      }
+
+      // Do the run-length encoding
+      encodedImageSize = rleEncode(rawBuf, rawImageSize, encodedBuf, sizeof(encodedBuf));
+
+      // Write the encoded data to the photons file at the current position
+      fwrite(encodedBuf, 1, encodedImageSize, photonsFile);
+      printf("Added %s to file, encoded size %d.\n", filenamebuf, encodedImageSize);
+      //    Save new address in nextLayerAddress
+      nextLayerAddress = currentLayerAddress + encodedImageSize;
+      //    Seek to correct LayersDef
+      fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + currentLayer * sizeof(ldl), SEEK_SET);
+      //    read LayersDef
+      if (fread(&ldl, sizeof(ldl), 1, photonsFile) != 1) {
+	fprintf(stderr, "Short read on layerdefs layer header.\n");
+	return -10;
+      }
+
+      //    Set address and datalen
+      ldl.address = currentLayerAddress;
+      ldl.datalen = encodedImageSize;
+      //    write LayersDef
+      fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + currentLayer * sizeof(ldl), SEEK_SET);
+      fwrite(&ldl, sizeof(ldl), 1, photonsFile);
+      //    seek to nextLayerAddress
+      fseek(photonsFile, nextLayerAddress, SEEK_SET);
+      if (unlink(filenamebuf) != 0) {
+	perror(filenamebuf);
+	return -12;
+      }
+    }
+    // Truncate file to <nextLayer>
+    fflush(photonsFile);
+    if (ftruncate(fileno(photonsFile), nextLayerAddress) != 0) {
+      perror ("ftruncate()");
+      return -11;
     }
   }
-#endif
   fclose(photonsFile);
   return 0;
 }
