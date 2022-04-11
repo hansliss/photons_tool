@@ -8,16 +8,16 @@ void printFileHeader(FILE *f, struct photons_fileheader *fh) {
   char si[13];
   memcpy(si, fh->sectionId, 12);
   si[12] = '\0';
-  fprintf(f, "File header:       %s\n", si);
-  fprintf(f, "Version:           %d.%d\n", fh->versionMajor, fh->versionMinor);
-  fprintf(f, "Number of areas:   %d\n", fh->numAreas);
-  fprintf(f, "Header address:    %d\n", fh->headerAddress);
-  fprintf(f, "(filler 1):        %d\n", fh->filler1);
-  fprintf(f, "Preview address:   %d\n", fh->previewAddress);
-  fprintf(f, "(filler 2):        %d\n", fh->filler2);
-  fprintf(f, "LayerDef address:  %d\n", fh->layerDefAddress);
-  fprintf(f, "(filler 3):        %d\n", fh->filler3);
-  fprintf(f, "Layer address:     %d\n", fh->layerAddress);
+  fprintf(f, "File header:      %s\n", si);
+  fprintf(f, "Version:          %d.%d\n", fh->versionMajor, fh->versionMinor);
+  fprintf(f, "Number of areas:  %d\n", fh->numAreas);
+  fprintf(f, "Header address:   %d\n", fh->headerAddress);
+  fprintf(f, "(filler 1):       %d\n", fh->filler1);
+  fprintf(f, "Preview address:  %d\n", fh->previewAddress);
+  fprintf(f, "(filler 2):       %d\n", fh->filler2);
+  fprintf(f, "LayerDef address: %d\n", fh->layerDefAddress);
+  fprintf(f, "(filler 3):       %d\n", fh->filler3);
+  fprintf(f, "Layer address:    %d\n", fh->layerAddress);
 }
 
 void printHeader(FILE *f, struct photons_header *h) {
@@ -43,7 +43,7 @@ void printHeader(FILE *f, struct photons_header *h) {
   fprintf(f, "Price:            %f\n", h->price);
   fprintf(f, "Resin type:       %d\n", h->resinType);
   fprintf(f, "Use indiv. para.: 0x%04X\n", h->individualParameters);
-  fprintf(f, "(filler 1):       %d\n", h->filler1);
+  fprintf(f, "Print time (s):   %d\n", h->printTime);
   fprintf(f, "(filler 2):       %d\n", h->filler2);
   fprintf(f, "(filler 3):       %d\n", h->filler3);
 }
@@ -69,9 +69,12 @@ void printLayerDefHeader(FILE *f, struct layersdef_header *ldh) {
 }
 
 void printLayersDefLayer(FILE *f, struct layersdef_layer *ldl) {
-  fprintf(f, "Layer address: %d\n", ldl->address);
-  fprintf(f, "Layer datalen: %d\n", ldl->datalen);
-  fprintf(f, "Layer Z height: %f\n", ldl->zHeight);
-  fprintf(f, "Layer lift speed: %f\n", ldl->liftSpeed);
-  fprintf(f, "Layer exposure time: %f\n", ldl->expTime);
+  fprintf(f, "Layer address:          %d\n", ldl->address);
+  fprintf(f, "Layer datalen:          %d\n", ldl->datalen);
+  fprintf(f, "Layer Z height:         %f\n", ldl->zHeight);
+  fprintf(f, "Layer lift speed:       %f\n", ldl->liftSpeed);
+  fprintf(f, "Layer exposure time:    %f\n", ldl->expTime);
+  fprintf(f, "Layer thickness:        %f\n", ldl->layerThickness);
+  fprintf(f, "Layer non-black pixels: %d\n", ldl->nonBlackPixels);
+  fprintf(f, "Layer filler 2:         %d\n", ldl->filler2);
 }

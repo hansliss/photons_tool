@@ -25,6 +25,27 @@ void usage(char *progname) {
 
 #define FLAG_DO_NOT_DECODE_LAYERS 0x0001
 
+int nonBlackPixels(FILE *photonsFile, struct layersdef_layer *ldl) {
+  int nonBlack=0, rawImageSize;
+  static unsigned char encodedBuf[BUFSIZE];
+  static unsigned char rawBuf[BUFSIZE];
+  fseek(photonsFile, ldl->address, SEEK_SET);
+  if (fread(encodedBuf, 1, ldl->datalen, photonsFile) != ldl->datalen) {
+    fprintf(stderr, "Short read on layer image.\n");
+    return -10;
+  }
+  rawImageSize = rleDecode(encodedBuf, ldl->datalen, rawBuf, sizeof(rawBuf));
+  for (int i=0; i<rawImageSize; i++) {
+    if (rawBuf[i] & 0xf0) {
+      nonBlack++;
+    }
+    if (rawBuf[i] & 0x0f) {
+      nonBlack++;
+    }
+  }
+  return nonBlack;
+}
+
 int main(int argc, char *argv[]) {
   int i, offset=0, o;
   FILE *photonsFile=NULL;
@@ -157,6 +178,7 @@ int main(int argc, char *argv[]) {
       fprintf(stderr, "Short read on layerdefs layer header.\n");
       return -10;
     }
+    printf("Extracted layer %d as %s, size %d\n", i, filenamebuf, rawImageSize);
     printLayersDefLayer(stdout, &ldl);
   }
   

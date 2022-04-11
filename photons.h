@@ -38,7 +38,7 @@ struct photons_header {
   float price;
   uint32_t resinType;
   uint32_t individualParameters;
-  uint32_t filler1;
+  uint32_t printTime;
   uint32_t filler2;
   uint32_t filler3;
 };
@@ -63,7 +63,9 @@ struct layersdef_layer {
   float zHeight;
   float liftSpeed;
   float expTime;
-  uint8_t reserved[12];
+  float layerThickness;
+  uint32_t nonBlackPixels;
+  uint32_t filler2;
 };
 
 void printFileHeader(FILE *f, struct photons_fileheader *fh);
