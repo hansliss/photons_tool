@@ -178,7 +178,6 @@ int main(int argc, char *argv[]) {
       fprintf(stderr, "Short read on layerdefs layer header.\n");
       return -10;
     }
-    printf("Extracted layer %d as %s, size %d\n", i, filenamebuf, rawImageSize);
     printLayersDefLayer(stdout, &ldl);
   }
   
