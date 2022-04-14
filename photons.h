@@ -12,7 +12,7 @@ struct photons_fileheader {
   uint32_t headerAddress;
   uint32_t filler1;
   uint32_t previewAddress;
-  uint32_t filler2;
+  uint32_t unknown1Address;
   uint32_t layerDefAddress;
   uint32_t filler3;
   uint32_t layerAddress;
@@ -34,7 +34,7 @@ struct photons_header {
   uint32_t antiAliasLevel;
   uint32_t resX;
   uint32_t resY;
-  float weight;
+  uint32_t weight;
   float price;
   uint32_t resinType;
   uint32_t individualParameters;
@@ -49,6 +49,12 @@ struct preview_header {
   uint32_t width;
   uint32_t mark;
   uint32_t height;
+};
+
+struct unknown1_header {
+  uint32_t filler1;
+  uint32_t length;
+  unsigned char val[16];
 };
 
 struct layersdef_header {
@@ -71,6 +77,7 @@ struct layersdef_layer {
 void printFileHeader(FILE *f, struct photons_fileheader *fh);
 void printHeader(FILE *f, struct photons_header *h);
 void printPreviewHeader(FILE *f, struct preview_header *ph);
+void printUnknown1Header(FILE *f, struct unknown1_header *u1h);
 void printLayerDefHeader(FILE *f, struct layersdef_header *ldh);
 void printLayersDefLayer(FILE *f, struct layersdef_layer *ldl);
 

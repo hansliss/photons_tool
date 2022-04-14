@@ -15,7 +15,7 @@ void usage(char *progname) {
   fprintf(stderr, "Usage: %s -f <file> [-P <preview file>] [-L <layer file prefix>] [-s <starting exposure> [-e <ending exposure>]]\n", progname);
   fprintf(stderr, "      [-o <layer offset (not counting base layers)] [-I <individual settings value>] [-N <normal exposure time>]\n");
   fprintf(stderr, "      [-l <file with layer paths>] [-F flags]\n");
-  fprintf(stderr, "[-M <log modifier> (remaps gray values) -W <work dir>]\n");
+  fprintf(stderr, "[-M <log modifier> (remaps gray values) -W <work dir>] [-G (count grey levels)]\n");
 }
 
 // We have to assume that any blob we read from the file will fit in one of these
@@ -61,6 +61,7 @@ int main(int argc, char *argv[]) {
   uint32_t flags=0;
   int encodedImageSize;
   int rawImageSize;
+  int countGreys=0;
   float normalExposureTime=-1;
   static char filenamebuf[2048];
   float startExp=-1, endExp=-1;
@@ -69,15 +70,17 @@ int main(int argc, char *argv[]) {
   struct photons_fileheader pfh;
   struct photons_header ph;
   struct preview_header pvh;
+  struct unknown1_header u1h;
   struct layersdef_header ldh;
   struct layersdef_layer ldl, bottomLayer_def, normalLayer_def;
   FILE *layerListFile=NULL;
   FILE *layerFile;
   float logMod=-1;
   int map[16];
+  int greys[16];
   float map_v;
   int currentLayerAddress, nextLayerAddress=0, layerDataAddress;
-  while ((o=getopt(argc, argv, "f:P:L:s:e:o:I:N:l:F:M:W:"))!=-1) {
+  while ((o=getopt(argc, argv, "f:P:L:s:e:o:I:N:l:F:M:W:G"))!=-1) {
     switch (o)
       {
       case 'f':
@@ -134,6 +137,9 @@ int main(int argc, char *argv[]) {
 	  return -2;
 	}
 	break;
+      case 'G':
+	countGreys=1;
+	break;
       default:
 	usage(argv[0]);
 	return -1;
@@ -144,6 +150,8 @@ int main(int argc, char *argv[]) {
     usage(argv[0]);
     return -1;
   }
+
+  memset(greys, 0, 16 * sizeof(int));
 
   // ****** Read stuff
   if (fread(&pfh, sizeof(pfh), 1, photonsFile) != 1) {
@@ -160,6 +168,13 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Short read on preview header.\n");
     return -10;
   }
+  if (pfh.unknown1Address != 0) {
+    fseek(photonsFile, pfh.unknown1Address, SEEK_SET);
+    if (fread(&u1h, sizeof(u1h), 1, photonsFile) != 1) {
+      fprintf(stderr, "Short read on unknown1 header.\n");
+      return -10;
+    }
+  }
   fseek(photonsFile, pfh.layerDefAddress, SEEK_SET);
   if (fread(&ldh, sizeof(ldh), 1, photonsFile) != 1) {
     fprintf(stderr, "Short read on layerdefs header.\n");
@@ -167,10 +182,42 @@ int main(int argc, char *argv[]) {
   }
 
   // ****** Print info
+  printf("********* File header *********\n");
   printFileHeader(stdout, &pfh);
+  printf("********* Photons header *********\n");
   printHeader(stdout, &ph);
+  printf("********* Preview header *********\n");
   printPreviewHeader(stdout, &pvh);
+  if (pfh.unknown1Address != 0) {
+    printf("********* Unknown area 1 *********\n");
+    printUnknown1Header(stdout, &u1h);
+  }
+  printf("********* LayerDefs header *********\n");
   printLayerDefHeader(stdout, &ldh);
+  if (countGreys) {
+    printf("********* Gray values count *********\n");
+    for (i=0; i<ldh.nlayers; i++) {
+      fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + i * sizeof(ldl), SEEK_SET);
+      if (fread(&ldl, sizeof(ldl), 1, photonsFile) != 1) {
+	fprintf(stderr, "Short read on layerdefs layer header.\n");
+	return -10;
+      }
+      fseek(photonsFile, ldl.address, SEEK_SET);
+      if (fread(encodedBuf, 1, ldl.datalen, photonsFile) != ldl.datalen) {
+	fprintf(stderr, "Short read on layer image.\n");
+	return -10;
+      }
+      rawImageSize = rleDecode(encodedBuf, ldl.datalen, rawBuf, sizeof(rawBuf));
+      for (int j = 0; j < rawImageSize; j++) {
+	greys[(rawBuf[j] & 0xf0) >> 4]++;
+	greys[rawBuf[j] & 0x0f]++;
+      }
+    }
+    for (i=0; i<16; i++) {
+      printf("Grey %1X: %d\n", i, greys[i]);
+    }
+  }
+  printf("********* Layers *********\n");
   for (i=0; i<ldh.nlayers; i++) {
     fprintf(stdout, "---------\nLayer %d\n", i);
     fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + i * sizeof(ldl), SEEK_SET);
