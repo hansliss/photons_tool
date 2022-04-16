@@ -12,10 +12,11 @@
 #include "photons_rle.h"
 
 void usage(char *progname) {
-  fprintf(stderr, "Usage: %s -f <file> [-P <preview file>] [-L <layer file prefix>] [-s <starting exposure> [-e <ending exposure>]]\n", progname);
+  fprintf(stderr, "Usage: %s -f <file> [-P <preview file>] [-L <layer file prefix>] [-s <starting exposure> -e <ending exposure>]\n", progname);
   fprintf(stderr, "      [-o <layer offset (not counting base layers)] [-I <individual settings value>] [-N <normal exposure time>]\n");
-  fprintf(stderr, "      [-l <file with layer paths>] [-F flags]\n");
-  fprintf(stderr, "[-M <log modifier> (remaps gray values) -W <work dir>] [-G (count grey levels)]\n");
+  fprintf(stderr, "      [-l <file with layer paths>] [-F flags] [-M <log modifier> (remaps gray values, requires work dir)]\n");
+  fprintf(stderr, "      [-W <work dir>] [-G (count grey levels)] [-B <bottom exposure>]\n");
+  fprintf(stderr, "      [-X <exposure steps> (generates horizontal exposure test after <offset> layers - requires work dir)]\n");
 }
 
 // We have to assume that any blob we read from the file will fit in one of these
@@ -63,8 +64,10 @@ int main(int argc, char *argv[]) {
   int rawImageSize;
   int countGreys=0;
   float normalExposureTime=-1;
+  float bottomExposureTime=-1;
   static char filenamebuf[2048];
   float startExp=-1, endExp=-1;
+  int exposureSteps=-1;
   static unsigned char encodedBuf[BUFSIZE];
   static unsigned char rawBuf[BUFSIZE];
   struct photons_fileheader pfh;
@@ -78,9 +81,11 @@ int main(int argc, char *argv[]) {
   float logMod=-1;
   int map[16];
   int greys[16];
+  int nonBlack;
   float map_v;
   int currentLayerAddress, nextLayerAddress=0, layerDataAddress;
-  while ((o=getopt(argc, argv, "f:P:L:s:e:o:I:N:l:F:M:W:G"))!=-1) {
+  pid_t myPid = getpid();
+  while ((o=getopt(argc, argv, "f:P:L:s:e:o:I:N:l:F:M:W:GX:B:"))!=-1) {
     switch (o)
       {
       case 'f':
@@ -96,32 +101,35 @@ int main(int argc, char *argv[]) {
 	layerPrefix = optarg;
 	break;
       case 's':
-	startExp=atof(optarg);
+	startExp = atof(optarg);
 	break;
       case 'e':
-	endExp=atof(optarg);
+	endExp = atof(optarg);
 	break;
       case 'o':
-	offset=atoi(optarg);
+	offset = strtol(optarg, NULL, 0);
 	break;
       case 'I':
-	individualParams=strtol(optarg, NULL, 0);
-	setIndividualParams=1;
+	individualParams = strtol(optarg, NULL, 0);
+	setIndividualParams = 1;
 	break;
       case 'N':
-	normalExposureTime=atof(optarg);
+	normalExposureTime = atof(optarg);
+	break;
+      case 'B':
+	bottomExposureTime = atof(optarg);
 	break;
       case 'F':
-	flags=strtol(optarg, NULL, 0);
+	flags = strtol(optarg, NULL, 0);
 	break;
       case 'l':
-	if (!(layerListFile=fopen(optarg,"r"))) {
+	if (!(layerListFile = fopen(optarg,"r"))) {
 	  perror(optarg);
 	  return -1;
 	}
 	break;
       case 'M':
-	logMod=atof(optarg);
+	logMod = atof(optarg);
 	break;
       case 'W':
 	workDirName = optarg;
@@ -138,7 +146,10 @@ int main(int argc, char *argv[]) {
 	}
 	break;
       case 'G':
-	countGreys=1;
+	countGreys = 1;
+	break;
+      case 'X':
+	exposureSteps = strtol(optarg, NULL, 0);
 	break;
       default:
 	usage(argv[0]);
@@ -146,7 +157,7 @@ int main(int argc, char *argv[]) {
 	break;
       }
   }
-  if (!photonsFile || (logMod > -1 && workDirName==NULL)) {
+  if (!photonsFile || (logMod > -1 && workDirName==NULL) || (startExp * endExp < 0) || (exposureSteps > 0 && workDirName == NULL)) {
     usage(argv[0]);
     return -1;
   }
@@ -289,6 +300,12 @@ int main(int argc, char *argv[]) {
     headerChanged=1;
   }
 
+  // Set the bottom exposure
+  if (bottomExposureTime > -1) {
+    ph.bottomExposureTime = bottomExposureTime;
+    headerChanged=1;
+  }
+
   // Write out the modified header
   if (headerChanged) {
     fseek(photonsFile, pfh.headerAddress, SEEK_SET);
@@ -296,10 +313,7 @@ int main(int argc, char *argv[]) {
   }
 
   // Set individual exposure times on layers
-  if (startExp > 0) {
-    if (endExp < 0) {
-      endExp = startExp;
-    }
+  if (exposureSteps <= 0 && startExp > 0 && endExp > 0) {
     for (i=ph.bottomLayers+offset; i<ldh.nlayers; i++) {
       fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + i * sizeof(ldl), SEEK_SET);
       if (fread(&ldl, sizeof(ldl), 1, photonsFile) != 1) {
@@ -313,6 +327,167 @@ int main(int argc, char *argv[]) {
 	fwrite(&ldl, sizeof(ldl), 1, photonsFile);
       }
     }
+  }
+
+  // Set individual exposure times on individual slices for all layers after <offset>
+  // We will need to use a work directory for this, to generate many more layers than
+  // the file originally contained.
+  if (exposureSteps > 0 && startExp > 0) {
+    for (currentLayer = 0; currentLayer < ldh.nlayers; currentLayer++) {
+      fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + currentLayer * sizeof(ldl), SEEK_SET);
+      if (fread(&ldl, sizeof(ldl), 1, photonsFile) != 1) {
+	fprintf(stderr, "Short read on layerdefs layer header.\n");
+	return -10;
+      }
+
+      sprintf(filenamebuf, "%s/layer%d_%04d.bin", workDirName, myPid, currentLayer);
+      if (!(outfile = fopen(filenamebuf, "w"))) {
+	perror(filenamebuf);
+	return -2;
+      }
+      fseek(photonsFile, ldl.address, SEEK_SET);
+      if (fread(encodedBuf, 1, ldl.datalen, photonsFile) != ldl.datalen) {
+	fprintf(stderr, "Short read on layer image.\n");
+	return -10;
+      }
+      rawImageSize = rleDecode(encodedBuf, ldl.datalen, rawBuf, sizeof(rawBuf));
+      fwrite(rawBuf, 1, rawImageSize, outfile);
+      printf("Extracted layer %d as %s, size %d\n", currentLayer, filenamebuf, rawImageSize);
+      fclose(outfile);
+    }
+    nextLayerAddress = pfh.layerDefAddress + sizeof(ldh) + (ldh.nlayers + (ldh.nlayers - (ph.bottomLayers + offset)) * (exposureSteps-1)) * sizeof(ldl);
+
+    // We enter the loop with the file positioned at 'nextLayerAddress'
+    fseek(photonsFile, nextLayerAddress, SEEK_SET);
+    int actualLayer = 0;
+    for (currentLayer=0; currentLayer<ldh.nlayers; currentLayer++) {
+
+      // Read layer data from the layer file created in the previous step
+      sprintf(filenamebuf, "%s/layer%d_%04d.bin", workDirName, myPid, currentLayer);
+      if (!(layerFile = fopen(filenamebuf, "r"))) {
+	perror(filenamebuf);
+	return -3;
+      }
+      rawImageSize=fread(rawBuf, 1, sizeof(rawBuf), layerFile);
+      fclose(layerFile);
+      
+      if (currentLayer >= ph.bottomLayers + offset) {
+	for (i = 0; i < exposureSteps; i++) {
+	  // encode and save layer, save the address to the next layer
+	  // then mask off a segment of it and loop
+	  // First layer gets the proper layer thickness and exposure = startExp,
+	  // subsequent ones get layer thickness 0 and exposure = (endExp - startExp)/exposureSteps
+	  
+	  // Save address in currentLayerAddress
+	  currentLayerAddress = nextLayerAddress;
+
+	  nonBlack=0;
+	  for (int j=0; j<rawImageSize; j++) {
+	    if (rawBuf[j] & 0xf0) {
+	      nonBlack++;
+	    }
+	    if (rawBuf[j] & 0x0f) {
+	      nonBlack++;
+	    }
+	  }
+	  
+	  // Do the run-length encoding
+	  encodedImageSize = rleEncode(rawBuf, rawImageSize, encodedBuf, sizeof(encodedBuf));
+	  
+	  // Write the encoded data to the photons file at the current position
+	  fwrite(encodedBuf, 1, encodedImageSize, photonsFile);
+	  printf("Added %s sublayer %d to file, encoded size %d.\n", filenamebuf, i, encodedImageSize);
+	  
+	  nextLayerAddress = currentLayerAddress + encodedImageSize;
+	  
+	  // Set address and datalen
+	  // We're assuming we have a correct header in ldl here, but we are
+	  // filling out most of it anyway
+	  ldl.address = currentLayerAddress;
+	  ldl.datalen = encodedImageSize;
+	  ldl.nonBlackPixels = nonBlack;
+	  if (i == 0) {
+	    ldl.expTime = startExp;
+	    ldl.layerThickness = ph.zThickness;
+	  } else {
+	    ldl.expTime = (endExp - startExp) / (float)exposureSteps;
+	    ldl.layerThickness = 0;
+	    ldl.zHeight = 0.1;
+	  }
+	  // write LayersDef - we need to use the actual layer number here!
+	  fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + actualLayer * sizeof(ldl), SEEK_SET);
+	  fwrite(&ldl, sizeof(ldl), 1, photonsFile);
+	  // seek to nextLayerAddress
+	  fseek(photonsFile, nextLayerAddress, SEEK_SET);
+	  for (int y = 0; y < ph.resY; y++) {
+	    memset(rawBuf + (y * ph.resX + i * ph.resX / exposureSteps) / 2, 0, (ph.resX / exposureSteps) / 2);
+	  }
+	  actualLayer++;
+	}
+      } else {
+	// Save address in currentLayerAddress
+	currentLayerAddress = nextLayerAddress;
+
+	nonBlack=0;
+	for (int j=0; j<rawImageSize; j++) {
+	  if (rawBuf[j] & 0xf0) {
+	    nonBlack++;
+	  }
+	  if (rawBuf[j] & 0x0f) {
+	    nonBlack++;
+	  }
+	}
+	
+	// Do the run-length encoding
+	encodedImageSize = rleEncode(rawBuf, rawImageSize, encodedBuf, sizeof(encodedBuf));
+	
+	// Write the encoded data to the photons file at the current position
+	fwrite(encodedBuf, 1, encodedImageSize, photonsFile);
+	printf("Added %s to file, encoded size %d.\n", filenamebuf, encodedImageSize);
+	// Save new address in nextLayerAddress
+	nextLayerAddress = currentLayerAddress + encodedImageSize;
+	
+	// Bit of a shortcut here: We blindly assume that we will have a valid ldl after the first
+	// few layers, and we do not try to read the original one. For these first few layers, we do
+	// read the original ldl before modding it
+	// Seek to correct LayersDef
+	fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + currentLayer * sizeof(ldl), SEEK_SET);
+	//    read LayersDef
+	if (fread(&ldl, sizeof(ldl), 1, photonsFile) != 1) {
+	  fprintf(stderr, "Short read on layerdefs layer header.\n");
+	  return -10;
+	}
+	ldl.address = currentLayerAddress;
+	ldl.datalen = encodedImageSize;
+	ldl.nonBlackPixels = nonBlack;
+	if (currentLayer >= ph.bottomLayers) {
+	  ldl.expTime = ph.normalExposureTime;
+	} else {
+	  ldl.expTime = ph.bottomExposureTime;
+	}
+	//    write LayersDef
+	fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + currentLayer * sizeof(ldl), SEEK_SET);
+	fwrite(&ldl, sizeof(ldl), 1, photonsFile);
+	//    seek to nextLayerAddress
+	fseek(photonsFile, nextLayerAddress, SEEK_SET);
+	actualLayer++;
+      }
+      if (unlink(filenamebuf) != 0) {
+	perror(filenamebuf);
+	return -12;
+      }
+    }
+    // Truncate file to <nextLayer>
+    fflush(photonsFile);
+    if (ftruncate(fileno(photonsFile), nextLayerAddress) != 0) {
+      perror ("ftruncate()");
+      return -11;
+    }
+    ldh.nlayers += (ldh.nlayers - (ph.bottomLayers + offset)) * (exposureSteps - 1);
+    // Seek to LayersDefHeader
+    fseek(photonsFile, pfh.layerDefAddress, SEEK_SET);
+    // Write LayersDefHeader
+    fwrite(&ldh, sizeof(ldh), 1, photonsFile);
   }
 
   // Replace all layers with the ones from the layer list
@@ -411,7 +586,7 @@ int main(int argc, char *argv[]) {
       printf("Map %d to %d\n", i, map[i]);
     }
     nextLayerAddress=0;
-    pid_t myPid = getpid();
+
     for (currentLayer=ph.bottomLayers; currentLayer<ldh.nlayers; currentLayer++) {
       // This is a near copy of the layer export code. Feel free to figure out an
       // elegant way to refactor both into one. I can't be bothered.
