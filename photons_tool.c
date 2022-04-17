@@ -7,6 +7,7 @@
 #include<sys/types.h>
 #include<sys/stat.h>
 #include<math.h>
+#include<png.h>
 
 #include "photons.h"
 #include "photons_rle.h"
@@ -22,9 +23,10 @@ void usage(char *progname) {
 // We have to assume that any blob we read from the file will fit in one of these
 // buffers, but also that a decoded raw image will fit. Just make it large enough
 // and never put buffers on the stack.
-#define BUFSIZE (1024 * 1024 * 4)
+#define BUFSIZE (1024 * 1024 * 8)
 
 #define FLAG_DO_NOT_DECODE_LAYERS 0x0001
+#define FLAG_EXTRACT_AS_PNG 0x0002
 
 int nonBlackPixels(FILE *photonsFile, struct layersdef_layer *ldl) {
   int nonBlack=0, rawImageSize;
@@ -53,6 +55,7 @@ int main(int argc, char *argv[]) {
   FILE *outfile;
   char *previewFile=NULL;
   char *layerPrefix=NULL;
+  char *layerSuffix="bin";
   char *workDirName=NULL;
   struct stat workDirStat;
   int individualParams=0;
@@ -162,6 +165,10 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
+  if (flags & FLAG_EXTRACT_AS_PNG) {
+    layerSuffix="png";
+  }
+
   memset(greys, 0, 16 * sizeof(int));
 
   // ****** Read stuff
@@ -264,19 +271,76 @@ int main(int argc, char *argv[]) {
 	fprintf(stderr, "Short read on layerdefs layer header.\n");
 	return -10;
       }
-      sprintf(filenamebuf, "%s_%04d.bin", layerPrefix, i);
-      if (!(outfile = fopen(filenamebuf, "w"))) {
-	perror(filenamebuf);
-	return -2;
-      }
       fseek(photonsFile, ldl.address, SEEK_SET);
       if (fread(encodedBuf, 1, ldl.datalen, photonsFile) != ldl.datalen) {
 	fprintf(stderr, "Short read on layer image.\n");
 	return -10;
       }
+      sprintf(filenamebuf, "%s_%04d.%s", layerPrefix, i, layerSuffix);
+      if (!(outfile = fopen(filenamebuf, "w"))) {
+	perror(filenamebuf);
+	return -2;
+      }
       if (flags & FLAG_DO_NOT_DECODE_LAYERS) {
 	fwrite(encodedBuf, 1, ldl.datalen, outfile);
 	printf("Extracted encoded layer %d as %s, size %d\n", i, filenamebuf, ldl.datalen);
+      } else if (flags & FLAG_EXTRACT_AS_PNG) {
+	png_structp png_ptr = NULL;
+	png_infop info_ptr = NULL;
+	size_t x, y;
+	png_byte ** row_pointers = NULL;
+	rawImageSize = rleDecode(encodedBuf, ldl.datalen, rawBuf, sizeof(rawBuf));
+	png_ptr = png_create_write_struct (PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+	if (png_ptr == NULL) {
+	  fprintf(stderr, "png_create_write_struct() failed\n");
+	  return -21;
+	}
+
+	info_ptr = png_create_info_struct (png_ptr);
+	if (info_ptr == NULL) {
+	  fprintf(stderr, "png_create_info_struct() failed\n");
+	  return -21;
+	}
+
+	/* Set up error handling. */
+
+	if (setjmp (png_jmpbuf (png_ptr))) {
+	  fprintf(stderr, "General PNG creation failure.\n");
+	  return -21;
+	}
+
+	/* Set image attributes. */
+
+	png_set_IHDR (png_ptr,
+		      info_ptr,
+		      ph.resX,
+		      ph.resY,
+		      4,
+		      PNG_COLOR_TYPE_GRAY,
+		      PNG_INTERLACE_NONE,
+		      PNG_COMPRESSION_TYPE_DEFAULT,
+		      PNG_FILTER_TYPE_DEFAULT);
+
+	/* Initialize rows of PNG. */
+
+	row_pointers = png_malloc (png_ptr, ph.resY * sizeof (png_byte *));
+	for (y = 0; y < ph.resY; y++) {
+	  png_byte *row =
+	    png_malloc (png_ptr, sizeof (uint8_t) * ph.resX / 2);
+	  row_pointers[y] = row;
+	  memcpy(row_pointers[y], rawBuf + y * ph.resX / 2, ph.resX / 2);
+	}
+
+	/* Write the image data to "fp". */
+
+	png_init_io (png_ptr, outfile);
+	png_set_rows (png_ptr, info_ptr, row_pointers);
+	png_write_png (png_ptr, info_ptr, PNG_TRANSFORM_IDENTITY, NULL);
+
+	for (y = 0; y < ph.resY; y++) {
+	  png_free (png_ptr, row_pointers[y]);
+	}
+	png_free (png_ptr, row_pointers);
       } else {
 	rawImageSize = rleDecode(encodedBuf, ldl.datalen, rawBuf, sizeof(rawBuf));
 	fwrite(rawBuf, 1, rawImageSize, outfile);
@@ -408,9 +472,14 @@ int main(int argc, char *argv[]) {
 	  ldl.nonBlackPixels = nonBlack;
 	  if (i == 0) {
 	    ldl.expTime = startExp;
-	    ldl.layerThickness = ph.zThickness;
 	  } else {
 	    ldl.expTime = (endExp - startExp) / (float)exposureSteps;
+	  }
+
+	  if (i == exposureSteps - 1) {
+	    ldl.layerThickness = ph.zThickness;
+	    ldl.zHeight = 5;
+	  } else {
 	    ldl.layerThickness = 0;
 	    ldl.zHeight = 0.1;
 	  }
