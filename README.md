@@ -19,5 +19,5 @@ Flags
 The flags are meant for features that don't need their own command-line options. There are
 two flags, so far:
 
-0x0001	   Do not RLE-decode layers when extracting
-0x0002	   Convert layers to PNG format when extracting
+* 0x0001	   Do not RLE-decode layers when extracting
+* 0x0002	   Convert layers to PNG format when extracting
