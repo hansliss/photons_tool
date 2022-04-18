@@ -26,7 +26,7 @@ void usage(char *progname) {
 #define BUFSIZE (1024 * 1024 * 8)
 
 #define FLAG_DO_NOT_DECODE_LAYERS 0x0001
-#define FLAG_EXTRACT_AS_PNG 0x0002
+#define FLAG_BITMAPS_AS_PNG 0x0002
 
 int nonBlackPixels(FILE *photonsFile, struct layersdef_layer *ldl) {
   int nonBlack=0, rawImageSize;
@@ -165,7 +165,7 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
-  if (flags & FLAG_EXTRACT_AS_PNG) {
+  if (flags & FLAG_BITMAPS_AS_PNG) {
     layerSuffix="png";
   }
 
@@ -284,10 +284,10 @@ int main(int argc, char *argv[]) {
       if (flags & FLAG_DO_NOT_DECODE_LAYERS) {
 	fwrite(encodedBuf, 1, ldl.datalen, outfile);
 	printf("Extracted encoded layer %d as %s, size %d\n", i, filenamebuf, ldl.datalen);
-      } else if (flags & FLAG_EXTRACT_AS_PNG) {
+      } else if (flags & FLAG_BITMAPS_AS_PNG) {
 	png_structp png_ptr = NULL;
 	png_infop info_ptr = NULL;
-	size_t x, y;
+	size_t y;
 	png_byte ** row_pointers = NULL;
 	rawImageSize = rleDecode(encodedBuf, ldl.datalen, rawBuf, sizeof(rawBuf));
 	png_ptr = png_create_write_struct (PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
@@ -325,8 +325,7 @@ int main(int argc, char *argv[]) {
 
 	row_pointers = png_malloc (png_ptr, ph.resY * sizeof (png_byte *));
 	for (y = 0; y < ph.resY; y++) {
-	  png_byte *row =
-	    png_malloc (png_ptr, sizeof (uint8_t) * ph.resX / 2);
+	  png_byte *row = png_malloc (png_ptr, sizeof (uint8_t) * ph.resX / 2);
 	  row_pointers[y] = row;
 	  memcpy(row_pointers[y], rawBuf + y * ph.resX / 2, ph.resX / 2);
 	}
@@ -341,6 +340,7 @@ int main(int argc, char *argv[]) {
 	  png_free (png_ptr, row_pointers[y]);
 	}
 	png_free (png_ptr, row_pointers);
+	png_destroy_write_struct(&png_ptr, &info_ptr);
       } else {
 	rawImageSize = rleDecode(encodedBuf, ldl.datalen, rawBuf, sizeof(rawBuf));
 	fwrite(rawBuf, 1, rawImageSize, outfile);
@@ -609,9 +609,45 @@ int main(int argc, char *argv[]) {
 	perror(filenamebuf);
 	return -3;
       }
-      //    RLE encode into photons file
-      //    Save length in encodedImageSize
-      rawImageSize=fread(rawBuf, 1, sizeof(rawBuf), layerFile);
+      if (flags && FLAG_BITMAPS_AS_PNG) {
+	png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+	png_infop info_ptr = png_create_info_struct(png_ptr);
+	png_init_io(png_ptr, layerFile);
+	png_read_png(png_ptr, info_ptr, PNG_TRANSFORM_IDENTITY, NULL);
+	
+	png_uint_32 width, height;
+	int bit_depth, color_type, interlace_method, compression_method, filter_method;
+	size_t y;
+	
+	png_get_IHDR (png_ptr,
+		      info_ptr,
+		      &width,
+		      &height,
+		      &bit_depth,
+		      &color_type,
+		      &interlace_method,
+		      &compression_method,
+		      &filter_method);
+	
+	if (width != ph.resX || height != ph.resY || bit_depth != 4 || color_type != PNG_COLOR_TYPE_GRAY) {
+	  fprintf(stderr, "%s: wrong image format\n", filenamebuf);
+	  return -22;
+	}
+	
+	png_byte ** row_pointers = png_get_rows(png_ptr, info_ptr);
+	
+	for (y = 0; y < ph.resY; y++) {
+	  memcpy(rawBuf + y * ph.resX / 2, row_pointers[y], ph.resX / 2);
+	  png_free (png_ptr, row_pointers[y]);
+	}
+	png_free (png_ptr, row_pointers);
+	rawImageSize = width * height/2;
+	//	png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+      } else {
+	//    RLE encode into photons file
+	//    Save length in encodedImageSize
+	rawImageSize=fread(rawBuf, 1, sizeof(rawBuf), layerFile);
+      }
       fclose(layerFile);
       encodedImageSize = rleEncode(rawBuf, rawImageSize, encodedBuf, sizeof(encodedBuf));
       fwrite(encodedBuf, 1, encodedImageSize, photonsFile);
