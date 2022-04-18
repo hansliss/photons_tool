@@ -16,7 +16,7 @@ void usage(char *progname) {
   fprintf(stderr, "Usage: %s -f <file> [-P <preview file>] [-L <layer file prefix>] [-s <starting exposure> -e <ending exposure>]\n", progname);
   fprintf(stderr, "      [-o <layer offset (not counting base layers)] [-I <individual settings value>] [-N <normal exposure time>]\n");
   fprintf(stderr, "      [-l <file with layer paths>] [-F flags] [-M <log modifier> (remaps gray values, requires work dir)]\n");
-  fprintf(stderr, "      [-W <work dir>] [-G (count grey levels)] [-B <bottom exposure>]\n");
+  fprintf(stderr, "      [-W <work dir>] [-G (count grey levels)] [-B <bottom exposure>] [-T <layer thickness>]\n");
   fprintf(stderr, "      [-X <exposure steps> (generates horizontal exposure test after <offset> layers - requires work dir)]\n");
 }
 
@@ -68,6 +68,7 @@ int main(int argc, char *argv[]) {
   int countGreys=0;
   float normalExposureTime=-1;
   float bottomExposureTime=-1;
+  float layerThickness=-1;
   static char filenamebuf[2048];
   float startExp=-1, endExp=-1;
   int exposureSteps=-1;
@@ -88,7 +89,7 @@ int main(int argc, char *argv[]) {
   float map_v;
   int currentLayerAddress, nextLayerAddress=0, layerDataAddress;
   pid_t myPid = getpid();
-  while ((o=getopt(argc, argv, "f:P:L:s:e:o:I:N:l:F:M:W:GX:B:"))!=-1) {
+  while ((o=getopt(argc, argv, "f:P:L:s:e:o:I:N:l:F:M:W:GX:B:T:"))!=-1) {
     switch (o)
       {
       case 'f':
@@ -121,6 +122,9 @@ int main(int argc, char *argv[]) {
 	break;
       case 'B':
 	bottomExposureTime = atof(optarg);
+	break;
+      case 'T':
+	layerThickness = atof(optarg);
 	break;
       case 'F':
 	flags = strtol(optarg, NULL, 0);
@@ -370,13 +374,34 @@ int main(int argc, char *argv[]) {
     headerChanged=1;
   }
 
+  // Set the bottom exposure
+  if (layerThickness > -1) {
+    ph.zThickness = layerThickness;
+    headerChanged=1;
+  }
+
   // Write out the modified header
   if (headerChanged) {
     fseek(photonsFile, pfh.headerAddress, SEEK_SET);
     fwrite(&ph, sizeof(ph), 1, photonsFile);
   }
 
-  // Set individual exposure times on layers
+  // Set layer thickness
+  if (layerThickness > 0) {
+    for (i=0; i<ldh.nlayers; i++) {
+      fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + i * sizeof(ldl), SEEK_SET);
+      if (fread(&ldl, sizeof(ldl), 1, photonsFile) != 1) {
+	fprintf(stderr, "Short read on layerdefs layer header.\n");
+	return -10;
+      }
+      
+      ldl.layerThickness = layerThickness;
+      fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + i * sizeof(ldl), SEEK_SET);
+      fwrite(&ldl, sizeof(ldl), 1, photonsFile);
+    }
+  }
+
+    // Set individual exposure times on layers
   if (exposureSteps <= 0 && startExp > 0 && endExp > 0) {
     for (i=ph.bottomLayers+offset; i<ldh.nlayers; i++) {
       fseek(photonsFile, pfh.layerDefAddress + sizeof(ldh) + i * sizeof(ldl), SEEK_SET);
